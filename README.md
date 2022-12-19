@@ -12,7 +12,7 @@ cd http-server
 make
 ./http-server
 ```
-
+Change the HTTP_FOLDER !
 Start Firefox and visit `127.0.0.1:1080`
 
 ## Adding content
