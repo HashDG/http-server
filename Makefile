@@ -1,7 +1,7 @@
 CC=gcc
 
 http-server: http-server.o htable.o session.o
-	$(CC) -o http-server http-server.o htable.o session.o
+	$(CC) -o http-server http-server.o htable.o session.o -lmagic
 
 session.o: session.c htable.h
 	$(CC) -o session.o -c session.c

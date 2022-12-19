@@ -1,12 +1,15 @@
 #include "session.h"
 
 #define REQUEST_SIZE 4294967296
-#define HTTP_FOLDER "/home/hashdg/dev/Projets/http-server/http_resources"
-#define OK "HTTP/1.1 200 OK\nContent-type: text/html; charset=utf-8\n\r\n\r\n"
-#define NOT_FOUND "HTTP/1.1 400 Not Found\nContent-type: text/html; charset=utf-8\n\r\n\r\n"
-#define METHOD_NOT_ALLOWED "HTTP/1.1 405 Method Not Allowed\nContent-type: text/html;charset=utf-8\n\r\n\r\n"
+#define HEADER_SIZE 65536
+#define CONTENT_TYPE_SIZE 256
+#define MIME_SIZE 128
+#define HTTP_FOLDER "http_resources"
+#define OK "HTTP/1.1 200 OK\n"
+#define NOT_FOUND "HTTP/1.1 400 Not Found\n"
+#define METHOD_NOT_ALLOWED "HTTP/1.1 405 Method Not Allowed\n"
 
-static char* parse(char * request) {
+static char * parse_request(char * request) {
 	// r_str est de la taille de ma soustraction des deux pointeurs
 	char* str = strstr(request, "HTTP/"), r_str[str-request];
 	strncpy(r_str, request, (--str)-request);
@@ -16,6 +19,16 @@ static char* parse(char * request) {
 		strcat(r_str, "index.html");
 	}
 	return strdup(r_str+5);
+}
+
+static char * parse_mime(char * uri) {
+	uri = strrchr(uri, '.');
+	if (uri != NULL) {
+		if (strcmp(uri, ".css")==0) {
+			return "text/css";
+		}
+	}
+	return "text/plain"; 
 }
 
 char* readfile(FILE * file) {
@@ -35,6 +48,11 @@ static bool is_html(FILE * file, char * name) {
     if (strstr(name, "favicon.ico")) {
     	return true;
     }
+    
+    if (strstr(name, ".css")) {
+    	printf("css: <%s>\n", readfile(file));
+    	return true;
+    }
 
 	while (fgets(line, sizeof(line), file) != NULL) {
         if (strstr(line, "<html") != NULL) {
@@ -48,11 +66,15 @@ static bool is_html(FILE * file, char * name) {
 void load_files(ht* ressources, char* path, int level) {
 	DIR * dir;
 	struct dirent *entry;
+	magic_t cookie;
 
     if ( (dir = opendir(path)) == NULL) {
         printf("Cannot open directory %s\n", path);
         return;
     }
+    
+    cookie = magic_open(MAGIC_MIME_TYPE);
+    magic_load(cookie, NULL);
 
 	while ((entry = readdir(dir)) != NULL) {
 		char full_path[1024];
@@ -62,15 +84,27 @@ void load_files(ht* ressources, char* path, int level) {
             	load_files(ressources, full_path, level + 1);
             }
         } else {
+
         	FILE * html_file = fopen(full_path, "r");
-        	http_ressource * ressource = malloc(sizeof(http_ressource));
-        	if ( is_html(html_file, &full_path[strlen(HTTP_FOLDER)+1]) || strstr(entry->d_name, "favicon.ico")) {
-        		ressource->type = HTML_FILE;
-        		ressource->html_file = html_file;
-        		ht_put(ressources, &full_path[strlen(HTTP_FOLDER)+1], ressource);
+        	http_ressource * http_r = malloc(sizeof(http_ressource));
+        	
+        	http_r->type = HTML_FILE;
+        	http_r->ressource = malloc(sizeof(html_ressource));
+        	http_r->ressource->mime_type = malloc(sizeof(char) * MIME_SIZE);
+        	
+        	const char * type = magic_file(cookie, &full_path[0]);
+        	if (strcmp(type, "text/plain") == 0) {
+        		strcpy(http_r->ressource->mime_type, parse_mime(&full_path[strlen(HTTP_FOLDER)+1]));
+        	} else {
+        		strcpy(http_r->ressource->mime_type, type);
         	}
+        	
+			http_r->ressource->file = html_file;
+			
+        	ht_put(ressources, &full_path[strlen(HTTP_FOLDER)+1], http_r);
         }
     }
+    magic_close(cookie);
     closedir(dir);
 }
 
@@ -105,7 +139,7 @@ void * session (void* arguments) {
 	ht * ressources = *( (ht **) args->arg2);
 	
 	int idx = 0, read_size;
-	char * request = malloc(sizeof(char)*REQUEST_SIZE), * reponse, * body, * header;
+	char * request = malloc(sizeof(char)*REQUEST_SIZE), * reponse, * body, * header = malloc(sizeof(char)*HEADER_SIZE), * content_type = malloc(sizeof(char)*CONTENT_TYPE_SIZE);
 	FILE * file;
 	
 	read(c_sock, request, REQUEST_SIZE);
@@ -113,31 +147,35 @@ void * session (void* arguments) {
 	printf("=======BEGIN-READ=======\n%s\n=======END-READ=======\n", request);
 
 	if (strstr(request, "GET")) {
-		char * parsed_request = parse(request);
+		char * parsed_request = parse_request(request);
 		printf("requête:\t[%s]\n", parsed_request);
 		if (ht_contains_key(ressources, parsed_request)) {
-			http_ressource* ressource = (http_ressource*) ht_get(ressources, parsed_request);
-			header = OK;
-			if (ressource->type == HTML_FILE) {
-				body = readfile(ressource->html_file);
-			} else if (ressource->type == HANDLER) {
-				http_handler * handler = ressource->handler;
+			http_ressource* http_r = (http_ressource*) ht_get(ressources, parsed_request);
+			strcat(header, OK);
+						
+			if (http_r->type == HTML_FILE) {
+				sprintf(content_type, "Content-type: %s;charset=utf-8", http_r->ressource->mime_type);
+				strcat(header, content_type);				
+				body = readfile(http_r->ressource->file);				
+			} else if (http_r->type == HANDLER) {
+				http_handler * handler = http_r->handler;
 				if (strstr(handler->method, "GET")) {
 					body = (*handler->handle)(parsed_request, NULL);
 				} else {
-					header = METHOD_NOT_ALLOWED;
+					strcat(header, METHOD_NOT_ALLOWED);
 					body = "<html><h1>Error 405</h1></html>";
 				}
 			}
 		} else {
 			printf("NOT FOUND\n");
-			header = NOT_FOUND;
+			strcat(header, NOT_FOUND);
 			body = "<html><h1>Error 404</h1></html>";
 		}
 	} else {
 		close(c_sock);
 		return NULL;
 	}
+	strcat(header, "\n\r\n\r");
 	
 	reponse=malloc(sizeof(char)*(strlen(header)+strlen(body)));
 	

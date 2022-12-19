@@ -12,7 +12,7 @@
 #include "session.h"
 
 #define THREAD_LIMIT 100
-#define HTTP_FOLDER "/home/hashdg/dev/Projets/http-server/http_resources"
+#define HTTP_FOLDER "http_resources"
 
 void ht_init(ht* ressources) {
 	load_files(ressources, HTTP_FOLDER, 0);

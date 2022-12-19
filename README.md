@@ -12,12 +12,14 @@ cd http-server
 make
 ./http-server
 ```
-Change the HTTP_FOLDER !
+
 Start Firefox and visit `127.0.0.1:1080`
 
 ## Adding content
 
-By default, HTML files have to be put in the `http_ressources` folder. Note that only HTML files (and the favicon.ico) will be saved by the server. Furthermore, if you want to add handlers :
+By default, HTML files have to be put in the `http_ressources` folder, you can put all the files you need as long as it's indexed in the MIME database. 
+
+Furthermore, if you want to add handlers :
 - write your handler in `session.c` as a function. Warning it has to follow this signature `char * handler(char*,char**)`
 - add your handler in the `load_handlers` function following the example of `simple_handler`
 
@@ -25,5 +27,5 @@ By default, HTML files have to be put in the `http_ressources` folder. Note that
 
 - [ ] Arguments for handlers
 - [ ] More methods for handlers
-- [ ] CSS support
+- [X] CSS support
 - [ ] Configuration file

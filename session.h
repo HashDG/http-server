@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <magic.h>
 
 #include "htable.h"
 
@@ -24,10 +25,16 @@ typedef struct http_handler {
 	char * (*handle)(char*,char**); // path, args 
 } http_handler;
 
+// Manage various html ressources like : CSS, HTML... 
+typedef struct html_ressource {
+	char * mime_type;
+	FILE * file;
+} html_ressource;
+
 typedef struct http_ressource {
 	http_ressource_type type;
 	union {
-		FILE * html_file;
+		html_ressource * ressource;
 		http_handler * handler;
 	};
 } http_ressource;
