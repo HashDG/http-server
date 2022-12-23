@@ -12,7 +12,7 @@
 #include "session.h"
 
 #define THREAD_LIMIT 100
-#define HTTP_FOLDER "http_resources"
+#define HTTP_FOLDER "http_ressources"
 
 void ht_init(ht* ressources) {
 	load_files(ressources, HTTP_FOLDER, 0);
@@ -58,13 +58,13 @@ int main() {
 	while ((c_sock = accept(sockfd, (struct sockaddr *) &c_addr, &c_size))) {
 		inet_ntop(AF_INET, &(c_addr.sin_addr), ip, INET_ADDRSTRLEN);
 		printf("Connection %s:%i\n", ip, c_addr.sin_port);
-		
-		arguments_t args;
-		args.arg1 = &c_sock;
-		args.arg2 = &ressources;
 	
 		// TODO implémenter correctement limite de threads
 		if (0 < THREAD_LIMIT) {
+			arguments_t args;
+			args.arg1 = &c_sock;
+			args.arg2 = &ressources;
+		
 			pthread_create(&thread, NULL, session, &args);
 		} else {
 			printf("Thread limit exceed\n");

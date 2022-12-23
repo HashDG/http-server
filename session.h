@@ -15,27 +15,20 @@
 
 #include "htable.h"
 
-typedef enum http_ressource_type {
-	HANDLER,
-	HTML_FILE
-} http_ressource_type;
-
-typedef struct http_handler {
-	char * method;
-	char * (*handle)(char*,char**); // path, args 
-} http_handler;
-
-// Manage various html ressources like : CSS, HTML... 
-typedef struct html_ressource {
-	char * mime_type;
-	FILE * file;
-} html_ressource;
+typedef struct html_ressource html_ressource;
+typedef struct http_handler http_handler;
 
 typedef struct http_ressource {
-	http_ressource_type type;
+	enum http_ressource_type { HANDLER, HTML_FILE } type;
 	union {
-		html_ressource * ressource;
-		http_handler * handler;
+		struct html_ressource {	
+			char * mime_type;
+			FILE * file;
+		} * ressource;
+		struct http_handler {
+			char * method;
+			char * (*handle)(char*,char**); // path, args 
+		} * handler;
 	};
 } http_ressource;
 

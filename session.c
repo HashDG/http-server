@@ -1,15 +1,19 @@
 #include "session.h"
 
 #define REQUEST_SIZE 4294967296
+#define BODY_SIZE 2147483648
 #define HEADER_SIZE 65536
-#define CONTENT_TYPE_SIZE 256
+#define CONTENT_TYPE_SIZE 255
+#define CONTENT_LENGTH_SIZE 255
 #define MIME_SIZE 128
-#define HTTP_FOLDER "http_resources"
-#define OK "HTTP/1.1 200 OK\n"
-#define NOT_FOUND "HTTP/1.1 400 Not Found\n"
-#define METHOD_NOT_ALLOWED "HTTP/1.1 405 Method Not Allowed\n"
+#define FILENAME_SIZE 255
 
-static char * parse_request(char * request) {
+#define HTTP_FOLDER "http_ressources"
+#define OK "HTTP/1.1 200 OK\r\n"
+#define NOT_FOUND "HTTP/1.1 404	 Not Found\r\n"
+#define METHOD_NOT_ALLOWED "HTTP/1.1 405 Method Not Allowed\r\n"
+
+static char * parse_request(char * key, char * request) {
 	// r_str est de la taille de ma soustraction des deux pointeurs
 	char* str = strstr(request, "HTTP/"), r_str[str-request];
 	strncpy(r_str, request, (--str)-request);
@@ -18,7 +22,7 @@ static char * parse_request(char * request) {
 	if (r_str[str-request-1]=='/') {
 		strcat(r_str, "index.html");
 	}
-	return strdup(r_str+5);
+	strcpy(key, r_str+5);
 }
 
 static char * parse_mime(char * uri) {
@@ -31,36 +35,15 @@ static char * parse_mime(char * uri) {
 	return "text/plain"; 
 }
 
-char* readfile(FILE * file) {
-	int length;
-	char* str;
+static size_t file_size(FILE * file) {
 	fseek(file, 0, SEEK_END);
-	length=ftell(file);
-	rewind(file);
-	str=malloc(sizeof(char) * length);
-	fread(str, sizeof(char), length, file);
-	return strdup(str);
+	size_t size = ftell(file);
+	fseek(file, 0, SEEK_SET);
+    return size;
 }
 
-static bool is_html(FILE * file, char * name) {
-	char line[1024];
-	    
-    if (strstr(name, "favicon.ico")) {
-    	return true;
-    }
-    
-    if (strstr(name, ".css")) {
-    	printf("css: <%s>\n", readfile(file));
-    	return true;
-    }
-
-	while (fgets(line, sizeof(line), file) != NULL) {
-        if (strstr(line, "<html") != NULL) {
-        	rewind(file);
-            return true;
-        }
-    }
-	return false;
+static bool starts_with(const char* pre, const char* txt) {
+	return (strstr(txt, pre) == txt);
 }
 
 void load_files(ht* ressources, char* path, int level) {
@@ -84,8 +67,6 @@ void load_files(ht* ressources, char* path, int level) {
             	load_files(ressources, full_path, level + 1);
             }
         } else {
-
-        	FILE * html_file = fopen(full_path, "r");
         	http_ressource * http_r = malloc(sizeof(http_ressource));
         	
         	http_r->type = HTML_FILE;
@@ -99,7 +80,9 @@ void load_files(ht* ressources, char* path, int level) {
         		strcpy(http_r->ressource->mime_type, type);
         	}
         	
-			http_r->ressource->file = html_file;
+        	FILE * html_file = fopen(full_path, (starts_with("text", type) ? "r" : "rb") );
+        	
+        	http_r->ressource->file = html_file;
 			
         	ht_put(ressources, &full_path[strlen(HTTP_FOLDER)+1], http_r);
         }
@@ -112,14 +95,14 @@ char * simple_handler(char * path, char ** args) {
 	char * r_str = malloc(sizeof(char) * 256);
 	
 	time_t t = time(NULL);
-    struct tm *tm = localtime(&t);
-    char s[64];
-    size_t ret = strftime(s, sizeof(s), "%c", tm);
+	struct tm *tm = localtime(&t);
+	char s[64];
+	size_t ret = strftime(s, sizeof(s), "%c", tm);
     
-    strcat(r_str, "<!DOCTYPE html><html><h1>Salut utilisateur, il est ");
-    strcat(r_str, s);
-    strcat(r_str, "</h1></html>");
-    return r_str;
+	strcat(r_str, "<!DOCTYPE html><html><h1>Salut utilisateur, il est ");
+	strcat(r_str, s);
+	strcat(r_str, "</h1></html>");
+	return r_str;
 }
 
 void load_handlers(ht* ressources) {
@@ -132,58 +115,98 @@ void load_handlers(ht* ressources) {
 	ht_put(ressources, "time", ressource);
 }
 
+
+static void manage_asset(char * header, unsigned char * body, size_t * body_size, char * path, http_ressource * asset) {
+	char * content_type = malloc(sizeof(char) * CONTENT_TYPE_SIZE), * content_length = malloc(sizeof(char) * CONTENT_LENGTH_SIZE);
+	if (asset->type == HTML_FILE) {
+		*body_size = file_size(asset->ressource->file);	
+		
+		sprintf(content_type, "Content-Type: %s", asset->ressource->mime_type);
+		if (starts_with("text", asset->ressource->mime_type)) {
+			strcat(content_type, ";charset=utf-8");
+		}				
+		sprintf(content_length, "Content-Length: %li", *body_size);
+		
+		strcat(header, content_type);
+		strcat(header, "\r\n");
+		strcat(header, content_length);
+		
+		fread(body, sizeof(unsigned char), *body_size, asset->ressource->file);
+	} else if (asset->type == HANDLER) {
+		http_handler * handler = asset->handler;
+		if (strstr(handler->method, "GET")) {
+			strcpy(body, (*handler->handle)(path, NULL));
+		} else {
+			strcat(header, METHOD_NOT_ALLOWED);
+			strcpy(body, "<html><h1>Error 405</h1></html>");
+		}
+	}
+	strcat(header, "\r\n");
+	free(content_type);
+	free(content_length);
+}
+
+static void reply(char * reponse, size_t * reponse_size, ht * ressources, bool keep_alive, char * request) {
+	unsigned char * body = malloc(sizeof(unsigned char) * BODY_SIZE), * key = malloc(sizeof(char) * FILENAME_SIZE), * header = malloc(sizeof(char) * HEADER_SIZE);
+	size_t body_size;
+	http_ressource * asset;
+
+	if (starts_with("GET", request)) {
+		parse_request(key, request);
+		printf("request: [%s]\n", key);
+		if (ht_contains_key(ressources, key)) {
+			printf("OK\n");
+			strcpy(header, OK);
+			asset = (http_ressource*) ht_get(ressources, key);
+			
+			manage_asset(header, body, &body_size, key, asset);
+			if (keep_alive) {
+				strcat(header, "Connection: keep-alive\r\n");	
+			}
+		} else {
+			printf("NOT FOUND\n");
+			strcpy(header, NOT_FOUND);
+			strcpy(body, "<html><h1>Error 404: Not Found/h1></html>");
+		}
+	} else {
+		printf("METHOD NOT ALLOWED\n");
+		strcpy(header, METHOD_NOT_ALLOWED);
+		strcpy(body, "<html><h1>Error 405: Method Not Allowed</h1></html>");
+	}
+	
+	strcat(header, "\r\n");
+	
+	strcpy(reponse, header);
+	memcpy(reponse+(strlen(header)), body, sizeof(unsigned char) * body_size );
+	*reponse_size = strlen(header) + body_size;
+	
+	free(header);
+	free(body);
+	free(key);
+}
+
 void * session (void* arguments) {
 	arguments_t* args = (arguments_t*) arguments;
 	
 	int c_sock = *( (int*) args->arg1);
 	ht * ressources = *( (ht **) args->arg2);
 	
-	int idx = 0, read_size;
-	char * request = malloc(sizeof(char)*REQUEST_SIZE), * reponse, * body, * header = malloc(sizeof(char)*HEADER_SIZE), * content_type = malloc(sizeof(char)*CONTENT_TYPE_SIZE);
-	FILE * file;
+	bool keep_alive = true;
+	size_t reponse_size;
+	char * request = malloc(sizeof(char)*REQUEST_SIZE), * reponse = malloc(sizeof(char)*REQUEST_SIZE);
 	
-	read(c_sock, request, REQUEST_SIZE);
-	
-	printf("=======BEGIN-READ=======\n%s\n=======END-READ=======\n", request);
+	while ( read(c_sock, request, REQUEST_SIZE) > 0 && keep_alive) {
+		printf("=======BEGIN-READ=======\n%s\n=======END-READ=======\n", request);
+		reply(reponse, &reponse_size, ressources, keep_alive, request);
+		printf("#######BEGIN-RESPONSE#######\n%s\n#######END-RESPONSE#######\n", reponse);
 
-	if (strstr(request, "GET")) {
-		char * parsed_request = parse_request(request);
-		printf("requête:\t[%s]\n", parsed_request);
-		if (ht_contains_key(ressources, parsed_request)) {
-			http_ressource* http_r = (http_ressource*) ht_get(ressources, parsed_request);
-			strcat(header, OK);
-						
-			if (http_r->type == HTML_FILE) {
-				sprintf(content_type, "Content-type: %s;charset=utf-8", http_r->ressource->mime_type);
-				strcat(header, content_type);				
-				body = readfile(http_r->ressource->file);				
-			} else if (http_r->type == HANDLER) {
-				http_handler * handler = http_r->handler;
-				if (strstr(handler->method, "GET")) {
-					body = (*handler->handle)(parsed_request, NULL);
-				} else {
-					strcat(header, METHOD_NOT_ALLOWED);
-					body = "<html><h1>Error 405</h1></html>";
-				}
-			}
-		} else {
-			printf("NOT FOUND\n");
-			strcat(header, NOT_FOUND);
-			body = "<html><h1>Error 404</h1></html>";
-		}
-	} else {
-		close(c_sock);
-		return NULL;
+		write(c_sock, reponse, reponse_size);
+		memset(reponse, 0, sizeof(char)*REQUEST_SIZE);
 	}
-	strcat(header, "\n\r\n\r");
-	
-	reponse=malloc(sizeof(char)*(strlen(header)+strlen(body)));
-	
-	strcat(reponse, header);
-	strcat(reponse, body);
-	
-	write(c_sock, reponse, strlen(reponse));
-
+	printf("Session closed\n");
 	close(c_sock);
+
+	free(request);
+	free(reponse);
 }
 
