@@ -61,7 +61,7 @@ void load_files(ht* ressources, char* path, int level) {
 
 	while ((entry = readdir(dir)) != NULL) {
 		char full_path[1024];
-        snprintf(full_path, sizeof(full_path), (path[strlen(path)] == '/') ? "%s%s": "%s/%s", path, entry->d_name);
+		snprintf(full_path, sizeof(full_path), (path[strlen(path)] == '/') ? "%s%s": "%s/%s", path, entry->d_name);
         if (entry->d_type == DT_DIR) {
         	if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
             	load_files(ressources, full_path, level + 1);
@@ -73,7 +73,7 @@ void load_files(ht* ressources, char* path, int level) {
         	http_r->ressource = malloc(sizeof(html_ressource));
         	http_r->ressource->mime_type = malloc(sizeof(char) * MIME_SIZE);
         	
-        	const char * type = magic_file(cookie, &full_path[0]);
+	        	const char * type = magic_file(cookie, &full_path[0]);
         	if (strcmp(type, "text/plain") == 0) {
         		strcpy(http_r->ressource->mime_type, parse_mime(&full_path[strlen(HTTP_FOLDER)+1]));
         	} else {
@@ -91,18 +91,15 @@ void load_files(ht* ressources, char* path, int level) {
     closedir(dir);
 }
 
-char * simple_handler(char * path, char ** args) {
-	char * r_str = malloc(sizeof(char) * 256);
-	
+void simple_handler(char * body, char * path, char ** args) {
 	time_t t = time(NULL);
 	struct tm *tm = localtime(&t);
 	char s[64];
 	size_t ret = strftime(s, sizeof(s), "%c", tm);
     
-	strcat(r_str, "<!DOCTYPE html><html><h1>Salut utilisateur, il est ");
-	strcat(r_str, s);
-	strcat(r_str, "</h1></html>");
-	return r_str;
+	strcat(body, "<!DOCTYPE html><html><h1>Salut utilisateur, il est ");
+	strcat(body, s);
+	strcat(body, "</h1></html>");
 }
 
 void load_handlers(ht* ressources) {
@@ -119,29 +116,30 @@ void load_handlers(ht* ressources) {
 static void manage_asset(char * header, unsigned char * body, size_t * body_size, char * path, http_ressource * asset) {
 	char * content_type = malloc(sizeof(char) * CONTENT_TYPE_SIZE), * content_length = malloc(sizeof(char) * CONTENT_LENGTH_SIZE);
 	if (asset->type == HTML_FILE) {
-		*body_size = file_size(asset->ressource->file);	
-		
-		sprintf(content_type, "Content-Type: %s", asset->ressource->mime_type);
-		if (starts_with("text", asset->ressource->mime_type)) {
-			strcat(content_type, ";charset=utf-8");
-		}				
-		sprintf(content_length, "Content-Length: %li", *body_size);
-		
-		strcat(header, content_type);
-		strcat(header, "\r\n");
-		strcat(header, content_length);
-		
+		*body_size = file_size(asset->ressource->file);
 		fread(body, sizeof(unsigned char), *body_size, asset->ressource->file);
 	} else if (asset->type == HANDLER) {
 		http_handler * handler = asset->handler;
 		if (strstr(handler->method, "GET")) {
-			strcpy(body, (*handler->handle)(path, NULL));
+			(*handler->handle)(body, path, NULL);
+			*body_size = strlen(body);
 		} else {
 			strcat(header, METHOD_NOT_ALLOWED);
 			strcpy(body, "<html><h1>Error 405</h1></html>");
 		}
 	}
+	
+	sprintf(content_type, "Content-Type: %s", asset->ressource->mime_type);
+		if (starts_with("text", asset->ressource->mime_type)) {
+			strcat(content_type, ";charset=utf-8");
+		}				
+	sprintf(content_length, "Content-Length: %li", *body_size);
+	
+	strcat(header, content_type);
 	strcat(header, "\r\n");
+	strcat(header, content_length);	
+	strcat(header, "\r\n");
+	
 	free(content_type);
 	free(content_length);
 }

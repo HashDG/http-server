@@ -27,7 +27,7 @@ typedef struct http_ressource {
 		} * ressource;
 		struct http_handler {
 			char * method;
-			char * (*handle)(char*,char**); // path, args 
+			void (*handle)(char*, char*,char**); // body, path, args 
 		} * handler;
 	};
 } http_ressource;
