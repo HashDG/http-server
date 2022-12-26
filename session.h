@@ -8,9 +8,12 @@
 #include <dirent.h>
 #include <time.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <magic.h>
 
 #include "htable.h"
@@ -19,8 +22,9 @@ typedef struct html_ressource html_ressource;
 typedef struct http_handler http_handler;
 
 typedef struct http_ressource {
-	enum http_ressource_type { HANDLER, HTML_FILE } type;
+	enum http_ressource_type { HANDLER, HTML_FILE, CGI } type;
 	union {
+		char * cgi_filename;
 		struct html_ressource {	
 			char * mime_type;
 			FILE * file;

@@ -25,16 +25,6 @@ static char * parse_request(char * key, char * request) {
 	strcpy(key, r_str+5);
 }
 
-static char * parse_mime(char * uri) {
-	uri = strrchr(uri, '.');
-	if (uri != NULL) {
-		if (strcmp(uri, ".css")==0) {
-			return "text/css";
-		}
-	}
-	return "text/plain"; 
-}
-
 static size_t file_size(FILE * file) {
 	fseek(file, 0, SEEK_END);
 	size_t size = ftell(file);
@@ -42,8 +32,42 @@ static size_t file_size(FILE * file) {
     return size;
 }
 
+static bool ends_with(const char* txt, const char* suffix) {
+	size_t txt_len = strlen(txt), suf_len = strlen(suffix);
+	if (suf_len > txt_len) {
+        return 0;
+    }
+    return strcmp(txt + txt_len - suf_len, suffix) == 0;
+}
+
 static bool starts_with(const char* pre, const char* txt) {
 	return (strstr(txt, pre) == txt);
+}
+
+static char * parse_mime(const char * uri) {
+	if (ends_with(uri, ".css")) {
+		return "text/css";
+	}
+	return "text/plain"; 
+}
+
+void http_ressource_init(http_ressource* http_r, char* fullpath, magic_t cookie) {
+	if (ends_with(fullpath, ".cgi")) {
+        http_r->type = CGI;
+        http_r->cgi_filename = fullpath; 
+    } else {
+		http_r->type = HTML_FILE;
+		http_r->ressource = malloc(sizeof(html_ressource));
+		http_r->ressource->mime_type = malloc(sizeof(char) * MIME_SIZE);
+		const char * type = magic_file(cookie, fullpath);
+        if (strcmp(type, "text/plain") == 0) {
+        	strcpy(http_r->ressource->mime_type, parse_mime(fullpath));
+        } else {
+        	strcpy(http_r->ressource->mime_type, type);
+        }
+        FILE * html_file = fopen(fullpath, (starts_with("text", type) ? "r" : "rb") );
+   		http_r->ressource->file = html_file;
+	}
 }
 
 void load_files(ht* ressources, char* path, int level) {
@@ -68,22 +92,8 @@ void load_files(ht* ressources, char* path, int level) {
             }
         } else {
         	http_ressource * http_r = malloc(sizeof(http_ressource));
-        	
-        	http_r->type = HTML_FILE;
-        	http_r->ressource = malloc(sizeof(html_ressource));
-        	http_r->ressource->mime_type = malloc(sizeof(char) * MIME_SIZE);
-        	
-	        	const char * type = magic_file(cookie, &full_path[0]);
-        	if (strcmp(type, "text/plain") == 0) {
-        		strcpy(http_r->ressource->mime_type, parse_mime(&full_path[strlen(HTTP_FOLDER)+1]));
-        	} else {
-        		strcpy(http_r->ressource->mime_type, type);
-        	}
-        	
-        	FILE * html_file = fopen(full_path, (starts_with("text", type) ? "r" : "rb") );
-        	
-        	http_r->ressource->file = html_file;
-			
+        	http_ressource_init(http_r, &full_path[0], cookie);
+        	printf("[%s]\n", &full_path[strlen(HTTP_FOLDER)+1   ]);
         	ht_put(ressources, &full_path[strlen(HTTP_FOLDER)+1], http_r);
         }
     }
@@ -112,6 +122,24 @@ void load_handlers(ht* ressources) {
 	ht_put(ressources, "time", ressource);
 }
 
+static void manage_cgi(char* request, char* reponse, char* cgi_filename) {
+	pid_t pid = fork();
+	if (pid==0) {
+		execl(cgi_filename, request, NULL);
+	} else {
+		int status;
+		waitpid(pid, &status, 0);
+		if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+			FILE* fp = popen(cgi_filename, "r");
+
+      		char buffer[1024];
+     		while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+     			strcat(reponse, buffer);
+      		}
+      		pclose(fp);
+		}
+	}
+}
 
 static void manage_asset(char * header, unsigned char * body, size_t * body_size, char * path, http_ressource * asset) {
 	char * content_type = malloc(sizeof(char) * CONTENT_TYPE_SIZE), * content_length = malloc(sizeof(char) * CONTENT_LENGTH_SIZE);
@@ -157,7 +185,15 @@ static void reply(char * reponse, size_t * reponse_size, ht * ressources, bool k
 			strcpy(header, OK);
 			asset = (http_ressource*) ht_get(ressources, key);
 			
-			manage_asset(header, body, &body_size, key, asset);
+			if (asset->type == CGI) {
+				strcpy(reponse, header);
+				manage_cgi(request, reponse, asset->cgi_filename);
+				*reponse_size = strlen(reponse);
+				return;
+			} else {
+				manage_asset(header, body, &body_size, key, asset);				
+			}
+			
 			if (keep_alive) {
 				strcat(header, "Connection: keep-alive\r\n");	
 			}

@@ -23,6 +23,12 @@ Furthermore, if you want to add handlers :
 - write your handler in `session.c` as a function. Warning it has to follow this signature `char * handler(char*,char**)`
 - add your handler in the `load_handlers` function following the example of `simple_handler`
 
+### CGI
+
+In any folder, you can add CGI files. Make sure to make them `.cgi` file. I tested only C compiled CGI, any compiled file which write on standard output should work.
+
+NOTE: in testing CGI seems slow
+
 ## TODO
 
 - [ ] Arguments for handlers
